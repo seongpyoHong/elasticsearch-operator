@@ -1,0 +1,2 @@
+# elasticsearch-operator
+Elasticsearch Operator
