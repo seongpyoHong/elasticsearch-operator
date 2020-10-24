@@ -1,0 +1,7 @@
+apiVersion: sphong.com.my.domain/v1alpha1
+kind: Elasticsearch
+metadata:
+  name: elasticsearch-sample
+spec:
+  # Add fields here
+  foo: bar

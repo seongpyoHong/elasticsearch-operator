@@ -2,6 +2,10 @@ domain: my.domain
 layout: go.kubebuilder.io/v2
 projectName: elasticsearch-operator
 repo: github.com/seongpyoHong/elasticsearch-operator
+resources:
+- group: sphong.com
+  kind: Elasticsearch
+  version: v1alpha1
 version: 3-alpha
 plugins:
   go.sdk.operatorframework.io/v2-alpha: {}
