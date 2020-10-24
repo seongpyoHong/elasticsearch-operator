@@ -20,22 +20,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// ElasticsearchSpec defines the desired state of Elasticsearch
-type ElasticsearchSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of Elasticsearch. Edit Elasticsearch_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
-}
-
 // ElasticsearchStatus defines the observed state of Elasticsearch
 type ElasticsearchStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	State string `json:"state,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -57,6 +47,77 @@ type ElasticsearchList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Elasticsearch `json:"items"`
+}
+
+// ElasticsearchSpec defines the desired state of Elasticsearch
+type ElasticsearchSpec struct {
+	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
+	// Important: Run "make" to regenerate code after modifying this file
+	//Master Node Replicas
+	MasterReplicas int `json:"master-replicas"`
+
+	//Client Node Replicas
+	ClientReplicas int `json:"client-replicas"`
+
+	//Hot Data Node Replica
+	HotDataReplicas int `json:"hot-data-replicas"`
+
+	//Warm Data Node Replica
+	WarmDataReplicas int `json:"warm-data-replicas"`
+
+	//NodeSelector for the pod to be eligible to run on a node (ex. Hot-Warm Architecture)
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	//Annotations
+	Annotations map[string]string `json:"annotations,omitempty"`
+
+	//Disk Size of Hot Data Node
+	HotDataDiskSize string `json:"hot-data-volume"`
+
+	//Disk Size of Warm Data Node
+	WarmDataDiskSize string `json:"warm-data-volume"`
+
+	//Elasticsearch Image
+	ElasticsearchImage string `json:"elasticsearch-image"`
+
+	//MasterJavaOpt
+	MasterJavaOpts string `json:"master-javaOpts"`
+
+	//ClientJavaOpt
+	ClientJavaOpts string `json:"client-javaOpts"`
+
+	//HotDataJavaOpt
+	HotDataJavaOpts string `json:"hot-data-javaOpts"`
+
+	//WarmDataJavaOpt
+	WarmDataJavaOpts string `json:"warm-data-javaOpts"`
+
+	//Cerebro
+	Cerebro Cerebro `json:"cerebro"`
+
+	//Kibana
+	Kibana Kibana `json:"kibana"`
+
+	//Curator
+	Curator Curator `json:"curator"`
+}
+
+// Kibana properties (Optional)
+type Kibana struct {
+	// Defines the image to use for deploying kibana
+	Image string `json:"image"`
+}
+
+// Cerebro properties (Optional)
+type Cerebro struct {
+	// Defines the image to use for deploying Cerebro
+	Image string `json:"image"`
+}
+
+// Curator properties (Optional)
+type Curator struct {
+	// Defines the image to use for deploying Curator
+	Image string `json:"image"`
 }
 
 func init() {
