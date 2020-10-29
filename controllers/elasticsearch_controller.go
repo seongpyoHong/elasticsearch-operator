@@ -66,6 +66,21 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		return ctrl.Result{}, err
 	}
 
+	//Create Discovery Service
+	foundMasterSvc := &v12.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name:elasticsearch.Name + "-discovery", Namespace:elasticsearch.Namespace}, foundMasterSvc)
+
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createMasterService(elasticsearch)
+	}
+
+	//Create Client Service
+	foundClientSvc := &v12.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name:elasticsearch.Name + "-client", Namespace:elasticsearch.Namespace}, foundClientSvc)
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createClientService(elasticsearch)
+	}
+
 	//Master Node
 	foundMaster := &v1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name:elasticsearch.Name + "-master", Namespace:elasticsearch.Namespace}, foundMaster)
@@ -93,6 +108,13 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		_ = r.createHddStorageClass(elasticsearch)
 	}
 
+	foundHotData := &v1.StatefulSet{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-hdd", Namespace: elasticsearch.Namespace}, foundHotData)
+
+	if err != nil && errors.IsNotFound(err) {
+
+	}
+
 	//TODO : check already exist => ensure the size is the same as spec => update status
 	// 1. Master Node (Deployment) - Done
 	// 2. Client Node (Deployment) - Done
@@ -102,6 +124,72 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	// 6. Kibana (Deployment)
 	// 7. Curator (CronJob)
 	return ctrl.Result{}, nil
+}
+
+func (r* ElasticsearchReconciler) createClientService(e *sphongcomv1alpha1.Elasticsearch) error {
+	clientSvcName := e.Name + "-client"
+
+	clientSvc := &v12.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: clientSvcName,
+			Labels: map[string]string{
+				"app" : e.Name + "-client",
+			},
+		},
+		Spec: v12.ServiceSpec{
+			Selector: map[string]string{
+				"app" : e.Name + "-client",
+			},
+			Ports: []v12.ServicePort{
+				v12.ServicePort{
+					Name:     "http",
+					Port:     9200,
+					Protocol: "TCP",
+				},
+			},
+			Type: v12.ServiceTypeLoadBalancer,
+		},
+	}
+
+	if err := r.Client.Create(context.TODO(), clientSvc); err != nil {
+		r.Log.Error(err , "Could not create client service! ")
+		return err
+	}
+
+	return nil
+}
+
+func (r* ElasticsearchReconciler) createMasterService(e *sphongcomv1alpha1.Elasticsearch) error {
+	discoverySvcName := e.Name + "-discovery"
+
+	discoverySvc := &v12.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: discoverySvcName,
+			Labels: map[string]string{
+				"app" : e.Name + "-master",
+			},
+		},
+		Spec: v12.ServiceSpec{
+			Ports: []v12.ServicePort{
+				v12.ServicePort{
+					Name:     "transport",
+					Port:     9300,
+					Protocol: "TCP",
+				},
+			},
+			Selector: map[string]string{
+				"app": e.Name + "-master",
+			},
+			ClusterIP: v12.ClusterIPNone,
+		},
+	}
+
+	if err := r.Client.Create(context.TODO(), discoverySvc); err != nil {
+		r.Log.Error(err , "Could not create discovery service! ")
+		return err
+	}
+
+	return nil
 }
 
 func (r *ElasticsearchReconciler) createHddStorageClass( e *sphongcomv1alpha1.Elasticsearch) error {
@@ -268,9 +356,8 @@ func (r *ElasticsearchReconciler) createDeploymentForMaster(e *sphongcomv1alpha1
 		FailureThreshold:    10,
 		SuccessThreshold:	  1,
 		Handler: v12.Handler{
-			HTTPGet: &v12.HTTPGetAction{
-				Port:   intstr.FromInt(9200),
-				Path:   "/_cluster/health?wait_for_status=yellow&timeout=60s",
+			TCPSocket: &v12.TCPSocketAction{
+				Port:   intstr.FromInt(9300),
 			},
 		},
 	}
@@ -389,7 +476,7 @@ func (r *ElasticsearchReconciler) createDeploymentForMaster(e *sphongcomv1alpha1
 	return nil
 }
 
-func createElasticsearchConf(e *sphongcomv1alpha1.Elasticsearch) map[string]string {
+func createElasticsearchConf() map[string]string {
 	ret := map[string]string{}
 	ret["elasticsearch.yml"] = `
 ##############################   Mandantary Field  #############################
@@ -544,7 +631,7 @@ discovery:
 }
 
 func (r *ElasticsearchReconciler) createElasticsearchConfigMap(e *sphongcomv1alpha1.Elasticsearch) error {
-	data := createElasticsearchConf(e)
+	data := createElasticsearchConf()
 	cf := v12.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: e.Name+"-config",
