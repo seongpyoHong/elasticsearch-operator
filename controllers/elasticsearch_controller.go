@@ -21,6 +21,7 @@ import (
 	v1 "k8s.io/api/apps/v1"
 	"k8s.io/api/batch/v1beta1"
 	v12 "k8s.io/api/core/v1"
+	v1beta12 "k8s.io/api/storage/v1beta1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -81,6 +82,17 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		_ = r.createDeploymentForMaster(elasticsearch)
 	}
 
+
+	//Data Node (Hot)
+
+	// First, Create Storage Class
+	foundHddStorageClass := &v1beta12.StorageClass{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-hdd", Namespace: elasticsearch.Namespace}, foundHddStorageClass)
+	
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createHddStorageClass(elasticsearch)
+	}
+
 	//TODO : check already exist => ensure the size is the same as spec => update status
 	// 1. Master Node (Deployment) - Done
 	// 2. Client Node (Deployment) - Done
@@ -90,6 +102,22 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	// 6. Kibana (Deployment)
 	// 7. Curator (CronJob)
 	return ctrl.Result{}, nil
+}
+
+func (r *ElasticsearchReconciler) createHddStorageClass( e *sphongcomv1alpha1.Elasticsearch) error {
+	hddStorageClass := &v1beta12.StorageClass{
+		ObjectMeta:           metav1.ObjectMeta{
+			Name: e.Name + "-hdd",
+		},
+		Provisioner:          "kubernetes.io/gce-pd",
+		Parameters:           map[string]string{"type" : "pd-standard"},
+	}
+	err := r.Client.Create(context.TODO(), hddStorageClass)
+	if err != nil {
+		r.Log.Error(err, "Failed to create HDD storage class..")
+		return err
+	}
+	return nil
 }
 
 func (r *ElasticsearchReconciler) createDeploymentForClient(e *sphongcomv1alpha1.Elasticsearch) error {
