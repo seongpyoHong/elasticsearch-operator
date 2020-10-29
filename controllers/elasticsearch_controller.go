@@ -72,9 +72,18 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	if err != nil && errors.IsNotFound(err) {
 		_ = r.createDeploymentForMaster(elasticsearch)
 	}
+
+	//Client Node
+	foundClient := &v1.Deployment{}
+	err = r.Get(ctx, types.NamespacedName{Name:elasticsearch.Name + "-client", Namespace:elasticsearch.Namespace}, foundClient)
+
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createDeploymentForMaster(elasticsearch)
+	}
+
 	//TODO : check already exist => ensure the size is the same as spec => update status
 	// 1. Master Node (Deployment) - Done
-	// 2. Client Node (Deployment)
+	// 2. Client Node (Deployment) - Done
 	// 3. Hot Data Node (StatefulSet)
 	// 4. Wram Data Node (StatefulSet)
 	// 5. Cerebro (Deployment)
@@ -83,8 +92,147 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	return ctrl.Result{}, nil
 }
 
+func (r *ElasticsearchReconciler) createDeploymentForClient(e *sphongcomv1alpha1.Elasticsearch) error {
+	labels := labelsForClient()
+	clientName := e.Name + "-client"
+	probe := &v12.Probe{
+		TimeoutSeconds:      60,
+		InitialDelaySeconds: 10,
+		FailureThreshold:    10,
+		SuccessThreshold:	  1,
+		Handler: v12.Handler{
+			HTTPGet: &v12.HTTPGetAction{
+				Port:   intstr.FromInt(9200),
+				Path:   "/_cluster/health?wait_for_status=yellow&timeout=60s",
+			},
+		},
+	}
+	clientDeployment := &v1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   clientName,
+			Labels: labels,
+		},
+		Spec: v1.DeploymentSpec{
+			Replicas: &e.Spec.MasterReplicas,
+			Template: v12.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: v12.PodSpec{
+					Containers: []v12.Container{
+						v12.Container{
+							Name:  clientName,
+							Image: e.Spec.ElasticsearchImage,
+							SecurityContext: &v12.SecurityContext{
+								Privileged: &[]bool{true}[0],
+								Capabilities: &v12.Capabilities{
+									Add: []v12.Capability{
+										"IPC_LOCK",
+									},
+								},
+							},
+
+							ReadinessProbe: probe,
+							Env: []v12.EnvVar{
+								v12.EnvVar{
+									Name: "NAMESPACE",
+									ValueFrom: &v12.EnvVarSource{
+										FieldRef: &v12.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+								v12.EnvVar{
+									Name:  "CLUSTER_NAME",
+									Value: e.Spec.ElasticsearchClusterName,
+								},
+								v12.EnvVar{
+									Name:  "NODE_MASTER",
+									Value: "false",
+								},
+								v12.EnvVar{
+									Name:  "NODE_DATA",
+									Value: "false",
+								},
+								v12.EnvVar{
+									Name:  "NODE_INGEST",
+									Value: "true",
+								},
+								v12.EnvVar{
+									Name:  "HTTP_ENABLE",
+									Value: "true",
+								},
+								v12.EnvVar{
+									Name:  "ES_JAVA_OPTS",
+									Value: e.Spec.ClientJavaOpts,
+								},
+								//TODO: Change to Client Service
+								v12.EnvVar{
+									Name:  "ES_CLIENT_ENDPOINT",
+									Value: "",
+								},
+								v12.EnvVar{
+									Name:  "NETWORK_HOST",
+									Value: "0.0.0.0",
+								},
+							},
+							Ports: []v12.ContainerPort{
+								v12.ContainerPort{
+									Name:          "transport",
+									ContainerPort: 9300,
+									Protocol:      v12.ProtocolTCP,
+								},
+								v12.ContainerPort{
+									Name:          "http",
+									ContainerPort: 9200,
+									Protocol:      v12.ProtocolTCP,
+								},
+							},
+							VolumeMounts: []v12.VolumeMount{
+								v12.VolumeMount{
+									Name:      "data",
+									MountPath: "/data",
+								},
+								v12.VolumeMount{
+									Name:      e.Name + "-config",
+									MountPath: "/elasticsearch-conf",
+								},
+							},
+						},
+					},
+					Volumes: []v12.Volume{
+						v12.Volume{
+							Name: "data",
+							VolumeSource: v12.VolumeSource{
+								EmptyDir: &v12.EmptyDirVolumeSource{},
+							},
+						},
+						v12.Volume{
+							Name: e.Name + "-config",
+							VolumeSource: v12.VolumeSource{
+								ConfigMap: &v12.ConfigMapVolumeSource{
+									LocalObjectReference: v12.LocalObjectReference{
+										Name: e.Name + "-config",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := r.Client.Create(context.TODO(),clientDeployment)
+	if err != nil {
+		r.Log.Error(err, "Failed To Create Client Deployments...")
+		return err
+	}
+	return nil
+}
+
 func (r *ElasticsearchReconciler) createDeploymentForMaster(e *sphongcomv1alpha1.Elasticsearch) error {
-	labels := labelsForMaster(e.Name)
+	labels := labelsForMaster()
 	masterName := e.Name + "-master"
 	probe := &v12.Probe{
 		TimeoutSeconds:      60,
@@ -384,8 +532,12 @@ func (r *ElasticsearchReconciler) createElasticsearchConfigMap(e *sphongcomv1alp
 	return nil
 }
 
-func labelsForMaster(name string) map[string]string {
+func labelsForMaster() map[string]string {
 	return map[string]string{"app": "elasticsearch-master"}
+}
+
+func labelsForClient() map[string]string {
+	return map[string]string{"app" : "elasticsearch-client"}
 }
 
 func (r *ElasticsearchReconciler) SetupWithManager(mgr ctrl.Manager) error {
