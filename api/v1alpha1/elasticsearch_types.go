@@ -54,16 +54,16 @@ type ElasticsearchSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 	//Master Node Replicas
-	MasterReplicas int `json:"master-replicas"`
+	MasterReplicas int32 `json:"master-replicas"`
 
 	//Client Node Replicas
-	ClientReplicas int `json:"client-replicas"`
+	ClientReplicas int32 `json:"client-replicas"`
 
 	//Hot Data Node Replica
-	HotDataReplicas int `json:"hot-data-replicas"`
+	HotDataReplicas int32 `json:"hot-data-replicas"`
 
 	//Warm Data Node Replica
-	WarmDataReplicas int `json:"warm-data-replicas"`
+	WarmDataReplicas int32 `json:"warm-data-replicas"`
 
 	//NodeSelector for the pod to be eligible to run on a node (ex. Hot-Warm Architecture)
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
@@ -80,6 +80,8 @@ type ElasticsearchSpec struct {
 	//Elasticsearch Image
 	ElasticsearchImage string `json:"elasticsearch-image"`
 
+	//Elasticsearch Cluster Name
+	ElasticsearchClusterName string `json:"elasticsearch-cluster-name"`
 	//MasterJavaOpt
 	MasterJavaOpts string `json:"master-javaOpts"`
 
