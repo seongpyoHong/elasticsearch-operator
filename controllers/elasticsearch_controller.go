@@ -23,6 +23,7 @@ import (
 	v12 "k8s.io/api/core/v1"
 	v1beta12 "k8s.io/api/storage/v1beta1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -112,7 +113,7 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-hdd", Namespace: elasticsearch.Namespace}, foundHotData)
 
 	if err != nil && errors.IsNotFound(err) {
-
+		_ = r.createStatefulSetForHotData(elasticsearch)
 	}
 
 	//TODO : check already exist => ensure the size is the same as spec => update status
@@ -124,6 +125,176 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	// 6. Kibana (Deployment)
 	// 7. Curator (CronJob)
 	return ctrl.Result{}, nil
+}
+
+func(r* ElasticsearchReconciler) createStatefulSetForHotData(e *sphongcomv1alpha1.Elasticsearch) error {
+	labels := labelsForHotData()
+	probe := &v12.Probe{
+		TimeoutSeconds:      60,
+		InitialDelaySeconds: 10,
+		FailureThreshold:    10,
+		SuccessThreshold:	  1,
+		Handler: v12.Handler{
+			TCPSocket: &v12.TCPSocketAction{
+				Port:   intstr.FromInt(9300),
+			},
+		},
+	}
+	hotDiskSize, _ := resource.ParseQuantity(e.Spec.HotDataDiskSize)
+	hotDataStatefulSet := &v1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: e.Name + "-data-hot",
+			Labels: labels,
+		},
+		Spec:       v1.StatefulSetSpec{
+			Replicas:             &e.Spec.HotDataReplicas,
+			Selector:             &metav1.LabelSelector{
+				MatchLabels:      labels,
+			},
+			Template:             v12.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: v12.PodSpec{
+					Affinity: &v12.Affinity{
+						NodeAffinity: &v12.NodeAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: &v12.NodeSelector{
+								NodeSelectorTerms: []v12.NodeSelectorTerm{
+									{
+										MatchExpressions: []v12.NodeSelectorRequirement{
+											{
+												Key:      "cloud.google.com/gke-nodepool",
+												Operator: "In",
+												Values:   []string{"ssd-node-pool"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					Containers: []v12.Container{
+						{
+							Name:                     e.Name + "-data-hot",
+							Image:                    e.Spec.ElasticsearchImage,
+							SecurityContext: &v12.SecurityContext{
+								Privileged: &[]bool{true}[0],
+								Capabilities: &v12.Capabilities{
+									Add: []v12.Capability{
+										"IPC_LOCK",
+									},
+								},
+							},
+							Args:                     []string{"/run.sh", "-Enode.attr.box_type=hot"},
+							ReadinessProbe:           probe,
+							Env:                      [] v12.EnvVar{
+								v12.EnvVar{
+									Name: "NAMESPACE",
+									ValueFrom: &v12.EnvVarSource{
+										FieldRef: &v12.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+								v12.EnvVar{
+									Name:  "CLUSTER_NAME",
+									Value: e.Spec.ElasticsearchClusterName,
+								},
+								v12.EnvVar{
+									Name:  "NODE_MASTER",
+									Value: "false",
+								},
+								v12.EnvVar{
+									Name:  "NODE_DATA",
+									Value: "true",
+								},
+								v12.EnvVar{
+									Name:  "NODE_INGEST",
+									Value: "false",
+								},
+								v12.EnvVar{
+									Name:  "HTTP_ENABLE",
+									Value: "false",
+								},
+								v12.EnvVar{
+									Name:  "ES_JAVA_OPTS",
+									Value: e.Spec.HotDataJavaOpts,
+								},
+								v12.EnvVar{
+									Name:  "ES_CLIENT_ENDPOINT",
+									Value: e.Name + "-client",
+								},
+								v12.EnvVar{
+									Name:  "ES_PERSISTENT",
+									Value: "true",
+								},
+							},
+							Ports: []v12.ContainerPort{
+								v12.ContainerPort{
+									Name:          "transport",
+									ContainerPort: 9300,
+									Protocol:      v12.ProtocolTCP,
+								},
+								v12.ContainerPort{
+									Name:          "dummy",
+									ContainerPort: 21212,
+									Protocol:      v12.ProtocolTCP,
+								},
+							},
+							VolumeMounts: []v12.VolumeMount{
+								v12.VolumeMount{
+									Name:      "data",
+									MountPath: "/data",
+								},
+								v12.VolumeMount{
+									Name:      e.Name + "-config",
+									MountPath: "/elasticsearch-conf",
+								},
+							},
+						},
+					},
+					Volumes: []v12.Volume{
+						v12.Volume{
+							Name: e.Name + "-config",
+							VolumeSource: v12.VolumeSource{
+								ConfigMap: &v12.ConfigMapVolumeSource{
+									LocalObjectReference: v12.LocalObjectReference{
+										Name: e.Name + "-config",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			VolumeClaimTemplates: []v12.PersistentVolumeClaim{
+				v12.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "data",
+						Labels: labels,
+						},
+					Spec: v12.PersistentVolumeClaimSpec{
+						AccessModes: []v12.PersistentVolumeAccessMode{
+							v12.ReadWriteOnce,
+						},
+						StorageClassName: &[]string{"ssd"}[0],
+						Resources: v12.ResourceRequirements{
+							Requests: v12.ResourceList{
+								v12.ResourceStorage: hotDiskSize,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := r.Client.Create(context.TODO(), hotDataStatefulSet); err != nil {
+		r.Log.Error(err , "Could not create hot data node! ")
+		return err
+	}
+
+	return nil
 }
 
 func (r* ElasticsearchReconciler) createClientService(e *sphongcomv1alpha1.Elasticsearch) error {
@@ -229,7 +400,7 @@ func (r *ElasticsearchReconciler) createDeploymentForClient(e *sphongcomv1alpha1
 			Labels: labels,
 		},
 		Spec: v1.DeploymentSpec{
-			Replicas: &e.Spec.MasterReplicas,
+			Replicas: &e.Spec.ClientReplicas,
 			Template: v12.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
@@ -282,10 +453,9 @@ func (r *ElasticsearchReconciler) createDeploymentForClient(e *sphongcomv1alpha1
 									Name:  "ES_JAVA_OPTS",
 									Value: e.Spec.ClientJavaOpts,
 								},
-								//TODO: Change to Client Service
 								v12.EnvVar{
 									Name:  "ES_CLIENT_ENDPOINT",
-									Value: "",
+									Value: e.Name + "-client",
 								},
 								v12.EnvVar{
 									Name:  "NETWORK_HOST",
@@ -420,10 +590,9 @@ func (r *ElasticsearchReconciler) createDeploymentForMaster(e *sphongcomv1alpha1
 									 Name:  "ES_JAVA_OPTS",
 									 Value: e.Spec.MasterJavaOpts,
 								 },
-								 //TODO: Change to Client Service
 								 v12.EnvVar{
 									 Name:  "ES_CLIENT_ENDPOINT",
-									 Value: "",
+									 Value: e.Name + "-client",
 								 },
 							 },
 							 Ports: []v12.ContainerPort{
@@ -653,6 +822,14 @@ func labelsForMaster() map[string]string {
 
 func labelsForClient() map[string]string {
 	return map[string]string{"app" : "elasticsearch-client"}
+}
+
+func labelsForHotData() map[string]string {
+	return map[string]string{"app" : "elasticsearch-data", "type" : "hot"}
+}
+
+func labelsForWarmData() map[string]string {
+	return map[string]string{"app" : "elasticsearch-data", "type" : "warm"}
 }
 
 func (r *ElasticsearchReconciler) SetupWithManager(mgr ctrl.Manager) error {
