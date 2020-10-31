@@ -67,6 +67,17 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		return ctrl.Result{}, err
 	}
 
+
+	//TODO : check already exist => ensure the size is the same as spec => update status
+	// 1. Master Node (Deployment) - Done
+	// 2. Client Node (Deployment) - Done
+	// 3. Hot Data Node (StatefulSet) - Done
+	// 4. Warm Data Node (StatefulSet) - Done
+	// 5. Cerebro (Deployment) - Done
+	// 6. Kibana (Deployment) - Done
+	// 7. Curator (CronJob)
+	// 8. Exporter (Deployment?)
+
 	//Create Discovery Service
 	foundMasterSvc := &v12.Service{}
 	err = r.Get(ctx, types.NamespacedName{Name:elasticsearch.Name + "-discovery", Namespace:elasticsearch.Namespace}, foundMasterSvc)
@@ -153,32 +164,130 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		_ = r.createDeploymentForCerebro(elasticsearch)
 	}
 
-	//TODO : check already exist => ensure the size is the same as spec => update status
-	// 1. Master Node (Deployment) - Done
-	// 2. Client Node (Deployment) - Done
-	// 3. Hot Data Node (StatefulSet) - Done
-	// 4. Warm Data Node (StatefulSet) - Done
-	// 5. Cerebro (Deployment) - Done
-	// 6. Kibana (Deployment)
-	// 7. Curator (CronJob)
-	// 8. Exporter (Deployment?)
+	//Kibana Deployment
+	foundKibanaSvc := &v12.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-kibana", Namespace: elasticsearch.Namespace}, foundKibanaSvc)
+
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createKibanaService(elasticsearch)
+	}
+
+	foundKibana := &v12.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-kibana", Namespace: elasticsearch.Namespace}, foundKibana)
+
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createDeploymentForKibana(elasticsearch)
+	}
+
 	return ctrl.Result{}, nil
+}
+
+func(r* ElasticsearchReconciler) createKibanaService(e *sphongcomv1alpha1.Elasticsearch) error {
+	labels := labelsForKibana()
+	kibanaSvcName := e.Name + "-kibana"
+
+	kibanaSvc := &v12.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: kibanaSvcName,
+			Labels: labels,
+		},
+		Spec: v12.ServiceSpec{
+			Selector: labels,
+			Ports: []v12.ServicePort{
+				v12.ServicePort{
+					Name:     "ui",
+					Port:     5601,
+					Protocol: "TCP",
+				},
+			},
+			Type: v12.ServiceTypeLoadBalancer,
+		},
+	}
+
+	if err := r.Client.Create(context.TODO(), kibanaSvc); err != nil {
+		r.Log.Error(err , "Could not create kibana service! ")
+		return err
+	}
+
+	return nil
+}
+
+func(r* ElasticsearchReconciler) createDeploymentForKibana(e *sphongcomv1alpha1.Elasticsearch) error {
+	labels := labelsForKibana()
+	kibanaName := e.Name + "-kibana"
+	probe := &v12.Probe{
+		TimeoutSeconds:      30,
+		InitialDelaySeconds: 1,
+		FailureThreshold:    10,
+		Handler: v12.Handler{
+			HTTPGet: &v12.HTTPGetAction{
+				Port:   intstr.FromInt(5601),
+				Path:   "/",
+				Scheme: v12.URISchemeHTTP,
+			},
+		},
+	}
+
+	kibanaDeployment := &v1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   kibanaName,
+			Labels: labels,
+		},
+		Spec: v1.DeploymentSpec{
+			Replicas: &[]int32{1}[0],
+			Template: v12.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: v12.PodSpec{
+					Containers: []v12.Container{
+						v12.Container{
+							Name:  kibanaName,
+							Image: e.Spec.Kibana.Image,
+							ReadinessProbe: probe,
+							Env: []v12.EnvVar{
+								v12.EnvVar{
+									Name:  "ELASTICSEARCH_HOSTS",
+									Value: e.Name + "-client",
+								},
+								v12.EnvVar{
+									Name:  "SERVER_HOST",
+									Value: "0.0.0.0",
+								},
+							},
+							Ports: []v12.ContainerPort{
+								v12.ContainerPort{
+									Name:          "ui",
+									ContainerPort: 5601,
+									Protocol:      v12.ProtocolTCP,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+
+	err := r.Client.Create(context.TODO(), kibanaDeployment)
+	if err != nil {
+		r.Log.Error(err, "Failed To Create Kibana Deployments...")
+		return err
+	}
+	return nil
 }
 
 func(r* ElasticsearchReconciler) createCerebroService(e *sphongcomv1alpha1.Elasticsearch) error {
 	cerebroSvcName := e.Name + "-cerebro"
-
+	labels := labelsForCerebro()
 	cerebroSvc := &v12.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: cerebroSvcName,
-			Labels: map[string]string{
-				"app" : e.Name + "-cerebro",
-			},
+			Labels: labels,
 		},
 		Spec: v12.ServiceSpec{
-			Selector: map[string]string{
-				"app" : e.Name + "-cerebro",
-			},
+			Selector: labels,
 			Ports: []v12.ServicePort{
 				v12.ServicePort{
 					Name:     "ui",
@@ -1197,6 +1306,9 @@ func labelsForCerebro() map[string]string {
 	return map[string]string{"app" : "elasticsearch-cerebro"}
 }
 
+func labelsForKibana() map[string]string {
+	return map[string]string{"app" : "elasticsearch-kibana"}
+}
 func (r *ElasticsearchReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&sphongcomv1alpha1.Elasticsearch{}).
