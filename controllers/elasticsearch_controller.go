@@ -82,6 +82,12 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		_ = r.createClientService(elasticsearch)
 	}
 
+	// Create Data Service
+	foundDataSvc := &v12.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-data", Namespace: elasticsearch.Namespace}, foundDataSvc)
+	if err != nil && errors.IsNotFound(err) {
+
+	}
 	//Master Node
 	foundMaster := &v1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name:elasticsearch.Name + "-master", Namespace:elasticsearch.Namespace}, foundMaster)
@@ -102,25 +108,41 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	//Data Node (Hot)
 
 	// First, Create Storage Class
-	foundHddStorageClass := &v1beta12.StorageClass{}
-	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-hdd", Namespace: elasticsearch.Namespace}, foundHddStorageClass)
-	
+	foundSsdStorageClass := &v1beta12.StorageClass{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-ssd", Namespace: elasticsearch.Namespace}, foundSsdStorageClass)
+
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createHddStorageClass(elasticsearch)
+		_ = r.createSsdStorageClass(elasticsearch)
 	}
 
 	foundHotData := &v1.StatefulSet{}
-	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-hdd", Namespace: elasticsearch.Namespace}, foundHotData)
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-data-hot", Namespace: elasticsearch.Namespace}, foundHotData)
 
 	if err != nil && errors.IsNotFound(err) {
 		_ = r.createStatefulSetForHotData(elasticsearch)
 	}
 
+	//Data Node (Warm)
+	//First, Create Storage Class
+	foundHddStorageClass := &v1beta12.StorageClass{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-hdd", Namespace: elasticsearch.Namespace}, foundHddStorageClass)
+
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createHddStorageClass(elasticsearch)
+	}
+
+	foundWarmData := v1.StatefulSet{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-data-warm", Namespace: elasticsearch.Namespace}, foundWarmData)
+
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createStatefulSetForWarmData(elasticsearch)
+	}
+
 	//TODO : check already exist => ensure the size is the same as spec => update status
 	// 1. Master Node (Deployment) - Done
 	// 2. Client Node (Deployment) - Done
-	// 3. Hot Data Node (StatefulSet)
-	// 4. Wram Data Node (StatefulSet)
+	// 3. Hot Data Node (StatefulSet) - Done
+	// 4. Warm Data Node (StatefulSet) - Done
 	// 5. Cerebro (Deployment)
 	// 6. Kibana (Deployment)
 	// 7. Curator (CronJob)
@@ -297,6 +319,176 @@ func(r* ElasticsearchReconciler) createStatefulSetForHotData(e *sphongcomv1alpha
 	return nil
 }
 
+func(r* ElasticsearchReconciler) createStatefulSetForWarmData(e *sphongcomv1alpha1.Elasticsearch) error {
+	labels := labelsForWarmData()
+	probe := &v12.Probe{
+		TimeoutSeconds:      60,
+		InitialDelaySeconds: 10,
+		FailureThreshold:    10,
+		SuccessThreshold:	  1,
+		Handler: v12.Handler{
+			TCPSocket: &v12.TCPSocketAction{
+				Port:   intstr.FromInt(9300),
+			},
+		},
+	}
+	warmDiskSize, _ := resource.ParseQuantity(e.Spec.WarmDataDiskSize)
+	warmDataStatefulSet := &v1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: e.Name + "-data-warm",
+			Labels: labels,
+		},
+		Spec:       v1.StatefulSetSpec{
+			Replicas:             &e.Spec.WarmDataReplicas,
+			Selector:             &metav1.LabelSelector{
+				MatchLabels:      labels,
+			},
+			Template:             v12.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: v12.PodSpec{
+					Affinity: &v12.Affinity{
+						NodeAffinity: &v12.NodeAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: &v12.NodeSelector{
+								NodeSelectorTerms: []v12.NodeSelectorTerm{
+									{
+										MatchExpressions: []v12.NodeSelectorRequirement{
+											{
+												Key:      "cloud.google.com/gke-nodepool",
+												Operator: "In",
+												Values:   []string{"hdd-node-pool"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					Containers: []v12.Container{
+						{
+							Name:                     e.Name + "-data-warm",
+							Image:                    e.Spec.ElasticsearchImage,
+							SecurityContext: &v12.SecurityContext{
+								Privileged: &[]bool{true}[0],
+								Capabilities: &v12.Capabilities{
+									Add: []v12.Capability{
+										"IPC_LOCK",
+									},
+								},
+							},
+							Args:                     []string{"/run.sh", "-Enode.attr.box_type=warm"},
+							ReadinessProbe:           probe,
+							Env:                      [] v12.EnvVar{
+								v12.EnvVar{
+									Name: "NAMESPACE",
+									ValueFrom: &v12.EnvVarSource{
+										FieldRef: &v12.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+								v12.EnvVar{
+									Name:  "CLUSTER_NAME",
+									Value: e.Spec.ElasticsearchClusterName,
+								},
+								v12.EnvVar{
+									Name:  "NODE_MASTER",
+									Value: "false",
+								},
+								v12.EnvVar{
+									Name:  "NODE_DATA",
+									Value: "true",
+								},
+								v12.EnvVar{
+									Name:  "NODE_INGEST",
+									Value: "false",
+								},
+								v12.EnvVar{
+									Name:  "HTTP_ENABLE",
+									Value: "false",
+								},
+								v12.EnvVar{
+									Name:  "ES_JAVA_OPTS",
+									Value: e.Spec.WarmDataJavaOpts,
+								},
+								v12.EnvVar{
+									Name:  "ES_CLIENT_ENDPOINT",
+									Value: e.Name + "-client",
+								},
+								v12.EnvVar{
+									Name:  "ES_PERSISTENT",
+									Value: "true",
+								},
+							},
+							Ports: []v12.ContainerPort{
+								v12.ContainerPort{
+									Name:          "transport",
+									ContainerPort: 9300,
+									Protocol:      v12.ProtocolTCP,
+								},
+								v12.ContainerPort{
+									Name:          "dummy",
+									ContainerPort: 21213,
+									Protocol:      v12.ProtocolTCP,
+								},
+							},
+							VolumeMounts: []v12.VolumeMount{
+								v12.VolumeMount{
+									Name:      "data",
+									MountPath: "/data",
+								},
+								v12.VolumeMount{
+									Name:      e.Name + "-config",
+									MountPath: "/elasticsearch-conf",
+								},
+							},
+						},
+					},
+					Volumes: []v12.Volume{
+						v12.Volume{
+							Name: e.Name + "-config",
+							VolumeSource: v12.VolumeSource{
+								ConfigMap: &v12.ConfigMapVolumeSource{
+									LocalObjectReference: v12.LocalObjectReference{
+										Name: e.Name + "-config",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			VolumeClaimTemplates: []v12.PersistentVolumeClaim{
+				v12.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "data",
+						Labels: labels,
+					},
+					Spec: v12.PersistentVolumeClaimSpec{
+						AccessModes: []v12.PersistentVolumeAccessMode{
+							v12.ReadWriteOnce,
+						},
+						StorageClassName: &[]string{"hdd"}[0],
+						Resources: v12.ResourceRequirements{
+							Requests: v12.ResourceList{
+								v12.ResourceStorage: warmDiskSize,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := r.Client.Create(context.TODO(), warmDataStatefulSet); err != nil {
+		r.Log.Error(err , "Could not create warm data node! ")
+		return err
+	}
+
+	return nil
+}
+
 func (r* ElasticsearchReconciler) createClientService(e *sphongcomv1alpha1.Elasticsearch) error {
 	clientSvcName := e.Name + "-client"
 
@@ -363,7 +555,41 @@ func (r* ElasticsearchReconciler) createMasterService(e *sphongcomv1alpha1.Elast
 	return nil
 }
 
-func (r *ElasticsearchReconciler) createHddStorageClass( e *sphongcomv1alpha1.Elasticsearch) error {
+func (r* ElasticsearchReconciler) createDataService(e *sphongcomv1alpha1.Elasticsearch) error {
+	dataSvcName := e.Name + "-data"
+
+	dataSvc := &v12.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: dataSvcName,
+			Labels: map[string]string{
+				"app" : e.Name + "-data",
+				"service.alpha.kubernetes.io/tolerate-unready-endpoints": "true",
+			},
+		},
+		Spec: v12.ServiceSpec{
+			Ports: []v12.ServicePort{
+				v12.ServicePort{
+					Name:     "transport",
+					Port:     9300,
+					Protocol: "TCP",
+				},
+			},
+			Selector: map[string]string{
+				"app": e.Name + "-data",
+			},
+			ClusterIP: v12.ClusterIPNone,
+		},
+	}
+
+	if err := r.Client.Create(context.TODO(), dataSvc); err != nil {
+		r.Log.Error(err , "Could not create data service! ")
+		return err
+	}
+
+	return nil
+}
+
+func (r *ElasticsearchReconciler) createHddStorageClass(e *sphongcomv1alpha1.Elasticsearch) error {
 	hddStorageClass := &v1beta12.StorageClass{
 		ObjectMeta:           metav1.ObjectMeta{
 			Name: e.Name + "-hdd",
@@ -374,6 +600,22 @@ func (r *ElasticsearchReconciler) createHddStorageClass( e *sphongcomv1alpha1.El
 	err := r.Client.Create(context.TODO(), hddStorageClass)
 	if err != nil {
 		r.Log.Error(err, "Failed to create HDD storage class..")
+		return err
+	}
+	return nil
+}
+
+func (r *ElasticsearchReconciler) createSsdStorageClass(e *sphongcomv1alpha1.Elasticsearch) error {
+	ssdStorageClass := &v1beta12.StorageClass{
+		ObjectMeta:           metav1.ObjectMeta{
+			Name: e.Name + "-ssd",
+		},
+		Provisioner:          "kubernetes.io/gce-pd",
+		Parameters:           map[string]string{"type" : "pd-ssd"},
+	}
+	err := r.Client.Create(context.TODO(), ssdStorageClass)
+	if err != nil {
+		r.Log.Error(err, "Failed to create SSD storage class..")
 		return err
 	}
 	return nil
