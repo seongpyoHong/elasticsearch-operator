@@ -131,11 +131,26 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		_ = r.createHddStorageClass(elasticsearch)
 	}
 
-	foundWarmData := v1.StatefulSet{}
+	foundWarmData := &v1.StatefulSet{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-data-warm", Namespace: elasticsearch.Namespace}, foundWarmData)
 
 	if err != nil && errors.IsNotFound(err) {
 		_ = r.createStatefulSetForWarmData(elasticsearch)
+	}
+
+	//Cerebro Deployment
+	foundCerebroSvc := &v12.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-cerebro",Namespace: elasticsearch.Namespace}, foundCerebroSvc)
+
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createCerebroService(elasticsearch)
+	}
+
+	foundCerebro := &v1.Deployment{}
+	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-cerebro", Namespace: elasticsearch.Namespace}, foundCerebro)
+
+	if err != nil && errors.IsNotFound(err) {
+		_ = r.createDeploymentForCerebro(elasticsearch)
 	}
 
 	//TODO : check already exist => ensure the size is the same as spec => update status
@@ -143,10 +158,114 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	// 2. Client Node (Deployment) - Done
 	// 3. Hot Data Node (StatefulSet) - Done
 	// 4. Warm Data Node (StatefulSet) - Done
-	// 5. Cerebro (Deployment)
+	// 5. Cerebro (Deployment) - Done
 	// 6. Kibana (Deployment)
 	// 7. Curator (CronJob)
+	// 8. Exporter (Deployment?)
 	return ctrl.Result{}, nil
+}
+
+func(r* ElasticsearchReconciler) createCerebroService(e *sphongcomv1alpha1.Elasticsearch) error {
+	cerebroSvcName := e.Name + "-cerebro"
+
+	cerebroSvc := &v12.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: cerebroSvcName,
+			Labels: map[string]string{
+				"app" : e.Name + "-cerebro",
+			},
+		},
+		Spec: v12.ServiceSpec{
+			Selector: map[string]string{
+				"app" : e.Name + "-cerebro",
+			},
+			Ports: []v12.ServicePort{
+				v12.ServicePort{
+					Name:     "ui",
+					Port:     9000,
+					Protocol: "TCP",
+				},
+			},
+			Type: v12.ServiceTypeLoadBalancer,
+		},
+	}
+
+	if err := r.Client.Create(context.TODO(), cerebroSvc); err != nil {
+		r.Log.Error(err , "Could not create cerebro service! ")
+		return err
+	}
+
+	return nil
+}
+
+func(r* ElasticsearchReconciler) createDeploymentForCerebro(e *sphongcomv1alpha1.Elasticsearch) error {
+	labels := labelsForCerebro()
+	cerebroName := e.Name + "-cerebro"
+	probe := &v12.Probe{
+		TimeoutSeconds:      30,
+		InitialDelaySeconds: 1,
+		FailureThreshold:    10,
+		Handler: v12.Handler{
+			HTTPGet: &v12.HTTPGetAction{
+				Port:   intstr.FromInt(9000),
+				Path:   "/#/connect", //TODO since cerebro doesn't have a healthcheck url, this path is enough
+				Scheme: v12.URISchemeHTTP,
+			},
+		},
+	}
+
+	cerebroDeployment := &v1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   cerebroName,
+			Labels: labels,
+		},
+		Spec: v1.DeploymentSpec{
+			Replicas: &[]int32{1}[0],
+			Template: v12.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: v12.PodSpec{
+					Containers: []v12.Container{
+						v12.Container{
+							Name:  cerebroName,
+							Image: e.Spec.Cerebro.Image,
+							ReadinessProbe: probe,
+							Env: []v12.EnvVar{
+								v12.EnvVar{
+									Name:  "ELASTICSEARCH_URL",
+									Value: e.Name + "-client",
+								},
+								v12.EnvVar{
+									Name:  "CEREBRO_USERNAME",
+									Value: "admin",
+								},
+								v12.EnvVar{
+									Name:  "CEREBRO_PASSWORD",
+									Value: "password",
+								},
+							},
+							Ports: []v12.ContainerPort{
+								v12.ContainerPort{
+									Name:          "ui",
+									ContainerPort: 9000,
+									Protocol:      v12.ProtocolTCP,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+
+	err := r.Client.Create(context.TODO(), cerebroDeployment)
+	if err != nil {
+		r.Log.Error(err, "Failed To Create Cerebro Deployments...")
+		return err
+	}
+	return nil
 }
 
 func(r* ElasticsearchReconciler) createStatefulSetForHotData(e *sphongcomv1alpha1.Elasticsearch) error {
@@ -1072,6 +1191,10 @@ func labelsForHotData() map[string]string {
 
 func labelsForWarmData() map[string]string {
 	return map[string]string{"app" : "elasticsearch-data", "type" : "warm"}
+}
+
+func labelsForCerebro() map[string]string {
+	return map[string]string{"app" : "elasticsearch-cerebro"}
 }
 
 func (r *ElasticsearchReconciler) SetupWithManager(mgr ctrl.Manager) error {
