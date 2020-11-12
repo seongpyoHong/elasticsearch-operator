@@ -2,6 +2,23 @@ apiVersion: sphong.com.my.domain/v1alpha1
 kind: Elasticsearch
 metadata:
   name: elasticsearch-sample
+  namespace: default
 spec:
-  # Add fields here
-  foo: bar
+  cerebro:
+    image: asia.gcr.io/able-groove-288900/cerebro:6.8.2
+  client-javaOpts: ""
+  client-replicas: 1
+  curator:
+    image: asia.gcr.io/able-groove-288900/cerebro:6.8.2
+  elasticsearch-cluster-name: es-cluster
+  elasticsearch-image: asia.gcr.io/able-groove-288900/elasticsearch-base:6.8.2
+  hot-data-javaOpts: ""
+  hot-data-replicas: 1
+  hot-data-volume: 1Gi
+  kibana:
+    image: asia.gcr.io/able-groove-288900/kibana:6.8.2
+  master-javaOpts: ""
+  master-replicas: 3
+  warm-data-javaOpts: ""
+  warm-data-replicas: 1
+  warm-data-volume: 1Gi

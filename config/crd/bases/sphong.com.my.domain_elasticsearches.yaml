@@ -1,0 +1,158 @@
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.3.0
+  creationTimestamp: null
+  name: elasticsearches.sphong.com.my.domain
+spec:
+  group: sphong.com.my.domain
+  names:
+    kind: Elasticsearch
+    listKind: ElasticsearchList
+    plural: elasticsearches
+    singular: elasticsearch
+  scope: Namespaced
+  subresources:
+    status: {}
+  validation:
+    openAPIV3Schema:
+      description: Elasticsearch is the Schema for the elasticsearches API
+      properties:
+        apiVersion:
+          description: 'APIVersion defines the versioned schema of this representation
+            of an object. Servers should convert recognized schemas to the latest
+            internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+          type: string
+        kind:
+          description: 'Kind is a string value representing the REST resource this
+            object represents. Servers may infer this from the endpoint the client
+            submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+          type: string
+        metadata:
+          type: object
+        spec:
+          description: ElasticsearchSpec defines the desired state of Elasticsearch
+          properties:
+            annotations:
+              additionalProperties:
+                type: string
+              description: Annotations
+              type: object
+            cerebro:
+              description: Cerebro
+              properties:
+                image:
+                  description: Defines the image to use for deploying Cerebro
+                  type: string
+              required:
+              - image
+              type: object
+            client-javaOpts:
+              description: ClientJavaOpt
+              type: string
+            client-replicas:
+              description: Client Node Replicas
+              format: int32
+              type: integer
+            curator:
+              description: Curator
+              properties:
+                image:
+                  description: Defines the image to use for deploying Curator
+                  type: string
+              required:
+              - image
+              type: object
+            elasticsearch-cluster-name:
+              description: Elasticsearch Cluster Name
+              type: string
+            elasticsearch-image:
+              description: Elasticsearch Image
+              type: string
+            hot-data-javaOpts:
+              description: HotDataJavaOpt
+              type: string
+            hot-data-replicas:
+              description: Hot Data Node Replica
+              format: int32
+              type: integer
+            hot-data-volume:
+              description: Disk Size of Hot Data Node
+              type: string
+            kibana:
+              description: Kibana
+              properties:
+                image:
+                  description: Defines the image to use for deploying kibana
+                  type: string
+              required:
+              - image
+              type: object
+            master-javaOpts:
+              description: MasterJavaOpt
+              type: string
+            master-replicas:
+              description: 'INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
+                Important: Run "make" to regenerate code after modifying this file
+                Master Node Replicas'
+              format: int32
+              type: integer
+            nodeSelector:
+              additionalProperties:
+                type: string
+              description: NodeSelector for the pod to be eligible to run on a node
+                (ex. Hot-Warm Architecture)
+              type: object
+            warm-data-javaOpts:
+              description: WarmDataJavaOpt
+              type: string
+            warm-data-replicas:
+              description: Warm Data Node Replica
+              format: int32
+              type: integer
+            warm-data-volume:
+              description: Disk Size of Warm Data Node
+              type: string
+          required:
+          - cerebro
+          - client-javaOpts
+          - client-replicas
+          - curator
+          - elasticsearch-cluster-name
+          - elasticsearch-image
+          - hot-data-javaOpts
+          - hot-data-replicas
+          - hot-data-volume
+          - kibana
+          - master-javaOpts
+          - master-replicas
+          - warm-data-javaOpts
+          - warm-data-replicas
+          - warm-data-volume
+          type: object
+        status:
+          description: ElasticsearchStatus defines the observed state of Elasticsearch
+          properties:
+            message:
+              type: string
+            state:
+              description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
+                of cluster Important: Run "make" to regenerate code after modifying
+                this file'
+              type: string
+          type: object
+      type: object
+  version: v1alpha1
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: []
+  storedVersions: []
