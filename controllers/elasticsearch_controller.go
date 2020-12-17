@@ -71,7 +71,10 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	err = r.Get(ctx, types.NamespacedName{Namespace: elasticsearch.Namespace, Name: elasticsearch.Name + "-config"}, foundElasticsearchConf)
 
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createElasticsearchConfigMap(elasticsearch)
+		creationErr := r.createElasticsearchConfigMap(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	//Create Discovery Service
@@ -79,34 +82,49 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-discovery", Namespace: elasticsearch.Namespace}, foundMasterSvc)
 
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createMasterService(elasticsearch)
+		creationErr := r.createMasterService(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	//Create Client Service
 	foundClientSvc := &v12.Service{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-client", Namespace: elasticsearch.Namespace}, foundClientSvc)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createClientService(elasticsearch)
+		creationErr := r.createClientService(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	// Create Data Service
 	foundDataSvc := &v12.Service{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-data", Namespace: elasticsearch.Namespace}, foundDataSvc)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createDataService(elasticsearch)
+		creationErr := r.createDataService(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 	//Master Node
 	foundMaster := &v1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-master", Namespace: elasticsearch.Namespace}, foundMaster)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createDeploymentForMaster(elasticsearch)
+		creationErr := r.createDeploymentForMaster(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	//Client Node
 	foundClient := &v1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-client", Namespace: elasticsearch.Namespace}, foundClient)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createDeploymentForClient(elasticsearch)
+		creationErr := r.createDeploymentForClient(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	//Data Node (Hot)
@@ -115,13 +133,19 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	foundSsdStorageClass := &v1beta12.StorageClass{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-ssd", Namespace: elasticsearch.Namespace}, foundSsdStorageClass)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createSsdStorageClass(elasticsearch)
+		creationErr := r.createSsdStorageClass(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	foundHotData := &v1.StatefulSet{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-data-hot", Namespace: elasticsearch.Namespace}, foundHotData)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createStatefulSetForHotData(elasticsearch)
+		creationErr := r.createStatefulSetForHotData(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	//Data Node (Warm)
@@ -129,20 +153,29 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	foundHddStorageClass := &v1beta12.StorageClass{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-hdd", Namespace: elasticsearch.Namespace}, foundHddStorageClass)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createHddStorageClass(elasticsearch)
+		creationErr := r.createHddStorageClass(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	foundWarmData := &v1.StatefulSet{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-data-warm", Namespace: elasticsearch.Namespace}, foundWarmData)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createStatefulSetForWarmData(elasticsearch)
+		creationErr := r.createStatefulSetForWarmData(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	//Cerebro Deployment
 	foundCerebroSvc := &v12.Service{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-cerebro", Namespace: elasticsearch.Namespace}, foundCerebroSvc)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createCerebroService(elasticsearch)
+		creationErr := r.createCerebroService(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	foundCerebro := &v1.Deployment{}
@@ -155,13 +188,20 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 	foundKibanaSvc := &v12.Service{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-kibana", Namespace: elasticsearch.Namespace}, foundKibanaSvc)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createKibanaService(elasticsearch)
+		creationErr := r.createKibanaService(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
+	//Kibana Service
 	foundKibana := &v12.Service{}
 	err = r.Get(ctx, types.NamespacedName{Name: elasticsearch.Name + "-kibana", Namespace: elasticsearch.Namespace}, foundKibana)
 	if err != nil && errors.IsNotFound(err) {
-		_ = r.createDeploymentForKibana(elasticsearch)
+		creationErr := r.createDeploymentForKibana(elasticsearch)
+		if creationErr != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	//scaling status's size => spec's size
@@ -173,7 +213,6 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 			log.Error(err, "Failed to update Deployment's Size (Hot Data Node Replica)")
 			return reconcile.Result{}, err
 		}
-		return reconcile.Result{Requeue: true}, nil
 	}
 
 	warmDataSize := elasticsearch.Spec.WarmDataReplicas
@@ -181,24 +220,32 @@ func (r *ElasticsearchReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 		foundWarmData.Spec.Replicas = &warmDataSize
 		err = r.Client.Update(context.TODO(), foundWarmData)
 		if err != nil {
-			log.Error(err, "Failed to update Deployment's Size")
+			log.Error(err, "Failed to update Deployment's Size (Warm Data Node Replica)")
 			return reconcile.Result{}, err
 		}
-		return reconcile.Result{Requeue: true}, nil
 	}
 
-	// Update the Memcached status with the pod names
-	// List the pods for this memcached's deployment
-	podList := &v12.PodList{}
-	listOpts := []client.ListOption{
+	// Update the Elasticsearch status with the pod names
+	// List the pods for this elasticsearch's deployment
+	hotPodList := &v12.PodList{}
+	hotListOpts := []client.ListOption{
 		client.InNamespace(elasticsearch.Namespace),
-		client.MatchingLabels(map[string]string{"app": "elasticsearch-data", "type": "warm"}),
+		client.MatchingLabels(labelsForWarmData()),
 	}
-	if err = r.List(ctx, podList, listOpts...); err != nil {
+	if err = r.List(ctx, hotPodList, hotListOpts...); err != nil {
 		log.Error(err, "Failed to list pods")
 		return ctrl.Result{}, err
 	}
-	//podNames := getPodNames(podList.Items)
+
+	warmPodList := &v12.PodList{}
+	warmListOpts := []client.ListOption{
+		client.InNamespace(elasticsearch.Namespace),
+		client.MatchingLabels(labelsForWarmData()),
+	}
+	if err = r.List(ctx, warmPodList, warmListOpts...); err != nil {
+		log.Error(err, "Failed to list pods")
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, nil
 }
 
